@@ -74,7 +74,7 @@ def set_seed(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
 
 
@@ -188,7 +188,7 @@ class PairedContrastiveDataset(Dataset):
         in_col = _find_column(df, ["in_path", "in", "clean_path", "src_path", "audio_in"])
 
         if out_col is None and in_col is None:
-            raise ValueError("CSV 缺少可识别的音频路径列，请至少包含 out_path 或 in_path。")
+            raise ValueError("CSV is missing audio path columns. Please provide at least out_path or in_path.")
 
         if out_col is None:
             out_col = in_col
@@ -212,7 +212,7 @@ class PairedContrastiveDataset(Dataset):
 
         if self.logger:
             self.logger.print(
-                f"加载数据集 [{split_type}] -> {len(self.out_paths)} 对样本 | split列={split_col} | out列={out_col} | in列={in_col} | label列={label_col}"
+                f"Loaded [{split_type}] dataset -> {len(self.out_paths)} pairs | split_col={split_col} | out_col={out_col} | in_col={in_col} | label_col={label_col}"
             )
 
     def __len__(self):
@@ -409,12 +409,12 @@ class LinearProbeEvaluator(nn.Module):
 
 
 def pretrain_contrastive(config, out_dir, logger):
-    logger.print("=== [PHASE 1] 开始对比学习预训练 ===")
+    logger.print("=== [PHASE 1] Start contrastive pretraining ===")
     device = config["device"]
 
     dataset = PairedContrastiveDataset(config["CSV_PATH"], split_type="train_meta", config=config, logger=logger)
     if len(dataset) == 0:
-        raise RuntimeError("train_meta 为空，请检查 CSV 的 split 列内容是否包含 train。")
+        raise RuntimeError("train_meta is empty. Please check whether the split column contains train entries.")
 
     loader = DataLoader(
         dataset,
@@ -486,7 +486,7 @@ def pretrain_contrastive(config, out_dir, logger):
             torch.save(model.encoder.state_dict(), best_ckpt_path)
             torch.save(prep_high.state_dict(), best_prep_high)
             torch.save(prep_low.state_dict(), best_prep_low)
-            logger.print("⭐ 发现更低 Loss, 已保存最佳模型")
+            logger.print("⭐ Found lower loss, saved best model.")
 
     plt.figure(figsize=(10, 6))
     plt.plot(range(1, len(pretrain_loss_hist) + 1), pretrain_loss_hist, marker="o")
@@ -510,14 +510,14 @@ def pretrain_contrastive(config, out_dir, logger):
 
 
 def run_evaluation(config, out_dir, logger, encoder_path, prep_high_path, prep_low_path):
-    logger.print("=== [PHASE 2] 开始线性评估 ===")
+    logger.print("=== [PHASE 2] Start linear evaluation ===")
     device = config["device"]
 
     train_ds = PairedContrastiveDataset(config["CSV_PATH"], split_type="train_meta", config=config, logger=logger)
     test_ds = PairedContrastiveDataset(config["CSV_PATH"], split_type="test_meta", config=config, logger=logger)
 
     if len(test_ds) == 0:
-        raise RuntimeError("test_meta 为空，请检查 CSV 的 split 列内容是否包含 test。")
+        raise RuntimeError("test_meta is empty. Please check whether the split column contains test entries.")
 
     train_loader = DataLoader(
         train_ds,
@@ -649,7 +649,7 @@ def run_evaluation(config, out_dir, logger, encoder_path, prep_high_path, prep_l
             cm_norm[i] = cm[i].astype(float) / row_sums[i]
 
     annot = np.asarray(
-        [f"{v1}\\n({v2:.1%})" for v1, v2 in zip(cm.flatten(), cm_norm.flatten())]
+        [f"{v1}\n({v2:.1%})" for v1, v2 in zip(cm.flatten(), cm_norm.flatten())]
     ).reshape(cm.shape)
     plt.figure(figsize=(9, 7))
     sns.heatmap(
@@ -677,7 +677,7 @@ def run_evaluation(config, out_dir, logger, encoder_path, prep_high_path, prep_l
         plt.savefig(os.path.join(out_dir, "03_tsne_distribution.png"), dpi=300, bbox_inches="tight")
         plt.close()
     except Exception as e:
-        logger.print(f"t-SNE 绘制失败: {e}")
+        logger.print(f"t-SNE plotting failed: {e}")
 
     y_bin = label_binarize(y_true, classes=list(range(config["num_classes"])))
     plt.figure(figsize=(10, 8))
@@ -694,7 +694,7 @@ def run_evaluation(config, out_dir, logger, encoder_path, prep_high_path, prep_l
     plt.savefig(os.path.join(out_dir, "04_roc_curve.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
-    logger.print(f"✅ 全流程完毕，结果保存至: {out_dir}")
+    logger.print(f"✅ Pipeline finished. Results saved to: {out_dir}")
 
 
 def main():
@@ -702,7 +702,7 @@ def main():
     set_seed(args.seed)
 
     if not os.path.exists(args.csv_path):
-        raise FileNotFoundError(f"CSV 不存在: {args.csv_path}")
+        raise FileNotFoundError(f"CSV does not exist: {args.csv_path}")
 
     class_names = [c.strip() for c in args.classes.split(",") if c.strip()]
     if not class_names:
@@ -742,14 +742,14 @@ def main():
     }
 
     start = time.time()
-    logger.print("开始执行 ShipsEar WOA 对比学习全流程")
+    logger.print("Starting ShipsEar WOA contrastive train-and-evaluate pipeline")
     logger.print(json.dumps({k: v for k, v in config.items() if k != "class_to_idx"}, ensure_ascii=False, indent=2))
 
     best_enc, best_prep_h, best_prep_l = pretrain_contrastive(config, out_dir, logger)
     run_evaluation(config, out_dir, logger, best_enc, best_prep_h, best_prep_l)
 
     elapsed = (time.time() - start) / 60.0
-    logger.print(f"总耗时: {elapsed:.2f} 分钟")
+    logger.print(f"Total elapsed time: {elapsed:.2f} minutes")
     logger.close()
 
 
